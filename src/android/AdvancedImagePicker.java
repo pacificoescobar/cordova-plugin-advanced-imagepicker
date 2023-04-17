@@ -4,9 +4,20 @@ import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 import android.net.Uri;
 import android.util.Base64;
+import android.util.Log;
+import android.os.Build;
+import android.Manifest;
+
+import androidx.activity.ComponentActivity;
+import androidx.activity.result.ActivityResultLauncher;
+import androidx.activity.result.PickVisualMediaRequest;
+import androidx.activity.result.contract.ActivityResultContracts;
+import androidx.activity.result.contract.ActivityResultContracts.PickMultipleVisualMedia;
+import androidx.activity.result.contract.ActivityResultContracts.PickVisualMedia;
 
 import org.apache.cordova.CallbackContext;
 import org.apache.cordova.CordovaPlugin;
+import org.apache.cordova.PermissionHelper;
 import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
@@ -25,6 +36,41 @@ import gun0912.tedimagepicker.builder.TedImagePicker;
 public class AdvancedImagePicker extends CordovaPlugin {
 
     private CallbackContext _callbackContext;
+    private ActivityResultLauncher<PickVisualMediaRequest> pickMedia;
+    private boolean asBase64;
+    private boolean asJpeg;
+    private int max;
+
+    protected static String[] permissions;
+    static {
+        if (android.os.Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            permissions = new String[]{ Manifest.permission.READ_MEDIA_IMAGES };
+        } else {
+            permissions = new String[]{ Manifest.permission.READ_EXTERNAL_STORAGE, Manifest.permission.WRITE_EXTERNAL_STORAGE };
+        }
+    }
+
+    @Override
+    public void pluginInitialize(){
+        super.pluginInitialize();
+        try{
+            this.cordova.getActivity().runOnUiThread(new Runnable() {
+                @Override
+                public void run() {
+                    pickMedia = cordova.getActivity().registerForActivityResult(new PickMultipleVisualMedia(10), result -> {
+                        if (!result.isEmpty()) {
+                            handleResult(result, false, "image", false);
+                        } else {
+                            returnError(AdvancedImagePickerErrorCodes.PickerCanceled, "User cancelled");
+                        }
+                    });
+                }
+            });
+        } catch(Exception e){
+            e.printStackTrace();
+            this.returnError(AdvancedImagePickerErrorCodes.UnknownError, e.getMessage());
+        }
+    }
 
     @Override
     public boolean execute(String action, JSONArray args, CallbackContext callbackContext) throws JSONException {
@@ -32,7 +78,10 @@ public class AdvancedImagePicker extends CordovaPlugin {
 
         try {
             if (action.equals("present")) {
-                this.presentFullScreen(args);
+                if(Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU)
+                    this.presentAndroidPicker(args);
+                else
+                    this.presentFullScreen(args);
                 return true;
             } else {
                 returnError(AdvancedImagePickerErrorCodes.UnsupportedAction);
@@ -119,9 +168,62 @@ public class AdvancedImagePicker extends CordovaPlugin {
             }
 
             String finalType1 = type;
-            builder.startMultiImage(result -> {
-                this.handleResult(result, asBase64, finalType1, asJpeg);
-            });
+            try{
+                builder.startMultiImage(result -> {
+                    this.handleResult(result, asBase64, finalType1, asJpeg);
+                });
+            } catch (Exception e) {
+                e.printStackTrace();
+                this.returnError(AdvancedImagePickerErrorCodes.UnknownError, e.getMessage());
+            }
+        }
+    }
+
+    private void presentAndroidPicker(JSONArray args) throws JSONException {        
+        JSONObject options = args.getJSONObject(0);
+        String mediaType = options.optString("mediaType", "IMAGE");
+        boolean showCameraTile = options.optBoolean("showCameraTile", true);
+        String scrollIndicatorDateFormat = options.optString("scrollIndicatorDateFormat");
+        boolean showTitle = options.optBoolean("showTitle", true);
+        String title = options.optString("title");
+        boolean zoomIndicator = options.optBoolean("zoomIndicator", true);
+        int min = options.optInt("min");
+        String defaultMinCountMessage = "You need to select a minimum of " + (min == 1 ? "one picture" : min + " pictures");
+        String minCountMessage = options.optString("minCountMessage", defaultMinCountMessage);
+        int max = options.optInt("max");
+        String defaultMaxCountMessage = "You can select a maximum of " + max + " pictures";
+        String maxCountMessage = options.optString("maxCountMessage", defaultMaxCountMessage);
+        String buttonText = options.optString("buttonText");
+        boolean asDropdown = options.optBoolean("asDropdown");
+        boolean asBase64 = options.optBoolean("asBase64");
+        boolean asJpeg = options.optBoolean("asJpeg");
+        boolean storagePermission = this.hasPermissions(this.permissions);
+
+        this.asBase64 = asBase64;
+        this.asJpeg = asJpeg;
+        this.max = max;
+
+        if (min < 0 || max < 0) {
+            this.returnError(AdvancedImagePickerErrorCodes.WrongJsonObject, "Min and Max can not be less then zero.");
+            return;
+        }
+
+        if (max != 0 && max < min) {
+            this.returnError(AdvancedImagePickerErrorCodes.WrongJsonObject, "Max can not be smaller than Min.");
+            return;
+        }
+
+        if(storagePermission){
+            try{
+                this.pickMedia.launch(new PickVisualMediaRequest.Builder()
+                        .setMediaType(mediaType.equals("VIDEO") ? PickVisualMedia.VideoOnly.INSTANCE : PickVisualMedia.ImageOnly.INSTANCE)
+                        .build());
+            } catch (Exception e) {
+                e.printStackTrace();
+                this.returnError(AdvancedImagePickerErrorCodes.UnknownError, e.getMessage());
+            }
+        } else {
+            PermissionHelper.requestPermissions(this, 0, permissions);
         }
     }
 
@@ -150,6 +252,7 @@ public class AdvancedImagePicker extends CordovaPlugin {
             }
             result.put(new JSONObject(resultMap));
         }
+        Log.v("AIP", "result: " + result.toString());
         this._callbackContext.success(result);
     }
 
@@ -195,5 +298,14 @@ public class AdvancedImagePicker extends CordovaPlugin {
             _callbackContext.error(new JSONObject(resultMap));
             _callbackContext = null;
         }
+    }
+
+    private boolean hasPermissions(String[] permissions) {
+        for (String permission: permissions) {
+            if (!PermissionHelper.hasPermission(this, permission)) {
+                return false;
+            }
+        }
+        return true;
     }
 }
