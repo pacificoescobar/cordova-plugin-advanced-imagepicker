@@ -44,7 +44,7 @@ public class AdvancedImagePicker extends CordovaPlugin {
     protected static String[] permissions;
     static {
         if (android.os.Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            permissions = new String[]{ Manifest.permission.CAMERA, Manifest.permission.CAMERA, Manifest.permission.READ_MEDIA_IMAGES };
+            permissions = new String[]{ Manifest.permission.READ_MEDIA_IMAGES };
         } else {
             permissions = new String[]{ Manifest.permission.READ_EXTERNAL_STORAGE, Manifest.permission.WRITE_EXTERNAL_STORAGE };
         }
